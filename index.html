@@ -199,7 +199,7 @@ License: MIT
         <div class="ex-people" id="reps" data-reps-picker role="radiogroup" aria-label="Number of Enterprise reps"></div>
       </div>
       <h3>Pick a scenario</h3>
-      <p class="ex-note">Each scenario sets all seven drivers at once. Open the drivers to fine-tune any one of them.</p>
+      <p class="ex-note">Each scenario sets all seven drivers at once. Open the drivers to fine-tune any one of them. Every change draws a fresh random set of futures, so repeating the same setting can move results by a point or two.</p>
       <div class="ex-presets" id="presets"><span>Scenarios</span><span class="ex-custom" id="custom-tag" hidden>Custom mix</span><button type="button" class="ex-btn ex-toggle" id="drv-toggle" aria-expanded="false" aria-controls="drv-panel"><span class="lab">Show drivers</span><svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M2 3.5 5 6.5 8 3.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></button></div>
       <div id="drv-panel" hidden>
         <p class="ex-note">Each slider runs from the pessimistic to the optimistic setting the team tested; the middle is the report’s base case.</p>
@@ -540,13 +540,16 @@ License: MIT
   function compute() {
     if (!drivers().length || !window.EdSim) return;
     const gen = ++st.gen, p = paramsFor(st.pos), reps = st.reps;
-    st.main = EdSim.run(p, reps, { trials: 3000, seed: 11, keepPaths: true });
-    st.allG = EdSim.run(p, 0, { trials: 3000, seed: 11 });
+    // Fresh random draws on every change; every run within one change shares the same draws so comparisons stay fair.
+    const seed = (window.crypto && crypto.getRandomValues) ? (crypto.getRandomValues(new Uint32Array(1))[0] || 1) : (1 + Math.floor(Math.random() * 4294967294));
+    st.seed = seed;
+    st.main = EdSim.run(p, reps, { trials: 3000, seed: seed, keepPaths: true });
+    st.allG = EdSim.run(p, 0, { trials: 3000, seed: seed });
     st.trade = null; st.tor = null; drawSim();
     const trade = []; let k = 0;
     const stepTrade = () => {
       if (gen !== st.gen) return;
-      const o = EdSim.run(p, k, { trials: 1500, seed: 11 }); trade.push({ reps: k, hit: o.hitAll, rev: o.meanRev });
+      const o = EdSim.run(p, k, { trials: 1500, seed: seed }); trade.push({ reps: k, hit: o.hitAll, rev: o.meanRev });
       k++;
       if (k <= MAXREPS) setTimeout(stepTrade, 0); else { st.trade = trade; document.getElementById('trade').classList.remove('busy'); drawTrade(); drawTake(); setTimeout(stepTor, 0); }
     };
@@ -554,8 +557,8 @@ License: MIT
     const stepTor = () => {
       if (gen !== st.gen) return;
       const r = D[j];
-      const lo = EdSim.run(paramsFor(Object.assign({}, st.pos, { [r.key]: -1 })), reps, { trials: 1200, seed: 11 }).hitAll;
-      const hi = EdSim.run(paramsFor(Object.assign({}, st.pos, { [r.key]: 1 })), reps, { trials: 1200, seed: 11 }).hitAll;
+      const lo = EdSim.run(paramsFor(Object.assign({}, st.pos, { [r.key]: -1 })), reps, { trials: 1200, seed: seed }).hitAll;
+      const hi = EdSim.run(paramsFor(Object.assign({}, st.pos, { [r.key]: 1 })), reps, { trials: 1200, seed: seed }).hitAll;
       tor.push({ key: r.key, label: r.label, lo, hi, pos: st.pos[r.key] }); j++;
       if (j < D.length) setTimeout(stepTor, 0); else { st.tor = tor; document.getElementById('tor').classList.remove('busy'); drawTor(); }
     };
@@ -581,7 +584,8 @@ License: MIT
   }
   function drawTake() {
     const el = document.getElementById(st.tab === 'report' ? 'takeaway-report' : 'takeaway'); el.replaceChildren();
-    const add = (t, b) => { const n = document.createElement(b ? 'b' : 'span'); n.textContent = t; el.appendChild(n); };
+    // One plain text node: inline spans that wrap across lines report overlapping boxes.
+    let txt = ''; const add = (t) => { txt += t; el.textContent = txt; };
     if (st.tab === 'report') { add('The report recommends '); add('three dedicated Enterprise reps', true); add(', with every new hire selling Grassroots: 68% odds of hitting all three milestones, versus 61% for the starting plan. The result depends most on how fast Enterprise deals close.'); return; }
     const m = st.main; if (!m) return;
     add(`With ${st.reps} Enterprise rep${st.reps === 1 ? '' : 's'} under these assumptions, `); add(pct(m.hitAll), true); add(' of simulated futures hit all three milestones');
@@ -624,7 +628,8 @@ License: MIT
     cap(svg, x(9) + 6, y(q[9].p50), 'Median', { fill: 'var(--color-fg)', dy: '0.32em' });
     [[3, T[0], 'Series A $3M'], [6, T[1], 'Series B $10M'], [9, T[2], 'Series C $25M']].forEach(([s, v, l]) => {
       svg.append('path').attr('d', d3.symbol(d3.symbolDiamond, 100)()).attr('transform', `translate(${x(s)},${y(v)})`).attr('fill', 'var(--color-bg)').attr('stroke', 'var(--color-fg)').attr('stroke-width', 2);
-      cap(svg, x(s) - 9, y(v) - 9, l, { anchor: 'end', fill: 'var(--color-fg)' });
+      const lw2 = tw(svg, l); const left = x(s) - 9 - lw2 >= mg.l + 4;
+      cap(svg, left ? x(s) - 9 : x(s) + 9, y(v) - 9, l, { anchor: left ? 'end' : 'start', fill: 'var(--color-fg)' });
     });
     const rule = svg.append('line').attr('y1', mg.t).attr('y2', h - mg.b).attr('stroke', 'var(--cds-chart-reference)').attr('opacity', 0);
     svg.append('rect').attr('x', mg.l).attr('y', mg.t).attr('width', w - mg.l - mg.r).attr('height', h - mg.t - mg.b).attr('fill', 'transparent')
